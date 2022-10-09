@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: TGW demo
+Metadata: 
+  AWS::CloudFormation::Interface:
+    ParameterGroups: 
+      - Label: 
+          default: Network Configuration
+        Parameters:
+          - IngressSSHSource
+Parameters:
+  IngressSSHSource:
+    Type: String
+    Description: Enter allow SSH source.
+
+Resources:
+  ######## VPC ########
+  TGWDemoVPC1:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/24
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: cfn-tgw-demo-vpc-1
+  TGWDemoVPC2:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.1.0/24
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: cfn-tgw-demo-vpc-2
+
+  ######## Subnet ########
+  TGWDemoSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWDemoVPC1
+      CidrBlock: 10.1.0.0/28
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      Tags:
+      - Key: Name
+        Value: cfn-tgw-demo-subnet-1
+  TGWDemoSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWDemoVPC2
+      CidrBlock: 10.1.1.0/28
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      Tags:
+      - Key: Name
+        Value: cfn-tgw-demo-subnet-2
+
+  ######## Route Table ########
+  TGWDemoRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TGWDemoVPC1
+      Tags:
+      - Key: Name
+        Value: cfn-tgw-demo-rt-1
+  TGWDemoRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TGWDemoVPC2
+      Tags:
+      - Key: Name
+        Value: cfn-tgw-demo-rt-2
+
+  ######## Subnet Route Table Association ########
+  TGWDemoSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref TGWDemoSubnet1
+      RouteTableId: !Ref TGWDemoRouteTable1
+  TGWDemoSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref TGWDemoSubnet2
+      RouteTableId: !Ref TGWDemoRouteTable2
+
+  ######## IGW ########
+  TGWDemoIGW1:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: cfn-tgw-demo-igw-1
+  TGWDemoIGW2:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: cfn-tgw-demo-igw-2
+
+  ######## Gateway Attachment for IGW ########
+  TGWDemoGatewayAttachment1:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref TGWDemoVPC1
+      InternetGatewayId: !Ref TGWDemoIGW1
+  TGWDemoGatewayAttachment2:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref TGWDemoVPC2
+      InternetGatewayId: !Ref TGWDemoIGW2
+
+  ######## TGW ########
+  TGWDemoTGW:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      AutoAcceptSharedAttachments: disable
+      DefaultRouteTableAssociation: enable
+      DefaultRouteTablePropagation: enable
+      DnsSupport: enable
+      VpnEcmpSupport: enable
+      Tags:
+      - Key: Name
+        Value: tgw-demo-tgw
+
+  ######## TGW Attachment ########
+  TGWDemoAttachment1:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties: 
+      SubnetIds: 
+        - String
+      TransitGatewayId: !Ref TGWDemoTGW
+      VpcId: !Ref TGWDemoVPC1
+      SubnetIds:
+        - !Ref TGWDemoSubnet1
+      Tags: 
+      - Key: Name
+        Value: cfn-tgw-demo-attch-1
+  TGWDemoAttachment2:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties: 
+      SubnetIds: 
+        - String
+      TransitGatewayId: !Ref TGWDemoTGW
+      VpcId: !Ref TGWDemoVPC2
+      SubnetIds:
+        - !Ref TGWDemoSubnet2
+      Tags: 
+      - Key: Name
+        Value: cfn-tgw-demo-attch-2
+
+  ######## TGW Route ########
+  TGWDemoTGWRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: TGWDemoAttachment1
+    Properties:
+       RouteTableId: !Ref TGWDemoRouteTable1
+       DestinationCidrBlock: 10.1.1.0/28
+       TransitGatewayId: !Ref TGWDemoTGW
+  TGWDemoTGWRoute2:
+    Type: AWS::EC2::Route
+    DependsOn: TGWDemoAttachment2
+    Properties:
+       RouteTableId: !Ref TGWDemoRouteTable2
+       DestinationCidrBlock: 10.1.0.0/28
+       TransitGatewayId: !Ref TGWDemoTGW
+
+  ######## IGW Route ########
+  TGWDemoIGWRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: TGWDemoGatewayAttachment1
+    Properties:
+       RouteTableId: !Ref TGWDemoRouteTable1
+       DestinationCidrBlock: 0.0.0.0/0
+       GatewayId: !Ref TGWDemoIGW1
+  TGWDemoIGWRoute2:
+    Type: AWS::EC2::Route
+    DependsOn: TGWDemoGatewayAttachment2
+    Properties:
+       RouteTableId: !Ref TGWDemoRouteTable2
+       DestinationCidrBlock: 0.0.0.0/0
+       GatewayId: !Ref TGWDemoIGW2
+
+  ######## Security Group ########
+  TGWDemoSG1:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: TGWDemoVPC1
+    Properties:
+      GroupDescription: demo
+      VpcId: !Ref TGWDemoVPC1
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref IngressSSHSource
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.1.1.0/28
+  TGWDemoSG2:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: TGWDemoVPC2
+    Properties:
+      GroupDescription: demo
+      VpcId: !Ref TGWDemoVPC2
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref IngressSSHSource
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.1.0.0/28
