@@ -196,7 +196,6 @@ Resources:
             Path: "/#{path}"
             Query: "#{query}"
             StatusCode: HTTP_301
-
       LoadBalancerArn: !Ref ALB
       Port: 80
       Protocol: HTTP
