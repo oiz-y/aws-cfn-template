@@ -1,0 +1,299 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: NLB targets ALB demo
+Metadata: 
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Network Configuration
+        Parameters:
+          - IngressIPAddress
+          - CertificateArn
+
+Parameters:
+  IngressIPAddress:
+    Type: String
+    Description: Enter your IP address for EC2 instance login and EC2 instance HTTP connection.
+  CertificateArn:
+    Type: String
+    Description: Enter the ARN of the server certificate to be set in ALB.
+
+Resources:
+  ######## VPC ########
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: nlb-alb-demo-vpc
+
+  ######## Subnet ########
+  Subnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      Tags:
+      - Key: Name
+        Value: nlb-alb-demo-subnet-1
+  Subnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      Tags:
+      - Key: Name
+        Value: nlb-alb-demo-subnet-2
+  Subnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select
+        - 2
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      Tags:
+      - Key: Name
+        Value: nlb-alb-demo-subnet-3
+
+  ######## Route Table ########
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: nlb-alb-demo-route-table
+
+  ######## Subnet Route Table Association ########
+  SubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Subnet1
+      RouteTableId: !Ref RouteTable
+  SubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Subnet2
+      RouteTableId: !Ref RouteTable
+  SubnetRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Subnet3
+      RouteTableId: !Ref RouteTable
+
+  ######## IGW ########
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: nlb-alb-demo-igw
+
+  ######## Gateway Attachment for IGW ########
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref IGW
+
+  ######## IGW Route ########
+  IGWRoute:
+    Type: AWS::EC2::Route
+    Properties:
+       RouteTableId: !Ref RouteTable
+       DestinationCidrBlock: 0.0.0.0/0
+       GatewayId: !Ref IGW
+
+  ######## Security Group ########
+  SSHSG:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: VPC
+    Properties:
+      GroupDescription: demo
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref IngressIPAddress
+      Tags:
+        - Key: Name
+          Value: nlb-alb-demo-ssh-sg
+  ALBSG:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: VPC
+    Properties:
+      GroupDescription: demo
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+      - Key: Name
+        Value: nlb-alb-demo-alb-sg
+  WebSG:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: VPC
+    Properties:
+      GroupDescription: demo
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSG
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref IngressIPAddress
+      Tags:
+        - Key: Name
+          Value: nlb-alb-demo-web-sg
+
+  ######## ALB ########
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Name: nlb-alb-demo-ALB
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref ALBSG
+      Subnets:
+        - !Ref Subnet1
+        - !Ref Subnet2
+        - !Ref Subnet3
+      Tags: 
+        - Key: Name
+          Value: nlb-alb-demo-ALB
+      Type: application
+
+  ######## ALB Listener ########
+  ALBHTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: 443
+            Host: "#{host}"
+            Path: "/#{path}"
+            Query: "#{query}"
+            StatusCode: HTTP_301
+
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+  ALBHTTPSListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTG
+      LoadBalancerArn: !Ref ALB
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+
+  ######## NLB ########
+  NLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Name: nlb-alb-demo-NLB
+      Scheme: internet-facing
+      Subnets:
+        - !Ref Subnet3
+      Tags: 
+        - Key: Name
+          Value: nlb-alb-demo-NLB
+      Type: network
+
+  ######## NLB Listener ########
+  NLBTCP80Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NLBALBTCP80TG
+      LoadBalancerArn: !Ref NLB
+      Port: 80
+      Protocol: TCP
+  NLBTCP443Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NLBALBTCP443TG
+      LoadBalancerArn: !Ref NLB
+      Port: 443
+      Protocol: TCP
+
+  ######## Target Group ########
+  ALBTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      TargetType: instance
+      Protocol: HTTP
+      Port: 80
+      Name: nlb-alb-demo-alb-tg
+      Tags:
+        - Key: Name
+          Value: nlb-alb-demo-alb-tg
+  NLBTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      TargetType: instance
+      Protocol: TCP
+      Port: 80
+      Name: nlb-alb-demo-nlb-tg
+      Tags:
+        - Key: Name
+          Value: nlb-alb-demo-nlb-tg
+  NLBALBTCP80TG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: ALBHTTPListener
+    Properties:
+      VpcId: !Ref VPC
+      TargetType: alb
+      Targets:
+      - Id: !Ref ALB
+      Protocol: TCP
+      Port: 80
+      Name: nlb-alb-demo-nlb-alb-80-tg
+      Tags:
+        - Key: Name
+          Value: nlb-alb-demo-nlb-alb-80-tg
+  NLBALBTCP443TG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: ALBHTTPSListener
+    Properties:
+      VpcId: !Ref VPC
+      TargetType: alb
+      Targets:
+      - Id: !Ref ALB
+      Protocol: TCP
+      Port: 443
+      Name: nlb-alb-demo-nlb-alb-443-tg
+      Tags:
+        - Key: Name
+          Value: nlb-alb-demo-nlb-alb-443-tg
