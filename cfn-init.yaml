@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Metadata:
+  AWS:CloudFormation::Interface:
+    ParameterGroups:
+      - Label: {default: "General Settings"}
+        Parameters:
+          - UseEC2
+          - SampleParam
+      - Label: {default: "Network Settings"}
+        Parameters:
+          - VPCId
+          - SubnetId
+      - Label: {default: "EC2 Settings"}
+        Parameters:
+          - SecurityGroupIngressCIDR
+          - ImageId
+          - InstanceType
+          - EC2KeyPairName
+
+Parameters:
+  UseEC2:
+    Type: String
+    AllowedValues: [true, false]
+    Default: true
+  SampleParam:
+    Type: String
+    AllowedValues: [true, false]
+    Default: true
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+  SecurityGroupIngressCIDR:
+    Type: String
+  ImageId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+  InstanceType:
+    Type: String
+    AllowedValues:
+      - t3.nano
+      - t3.micro
+      - t3.small
+  EC2KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+
+Conditions:
+  IsUseEC2: !Equals [!Ref UseEC2, 'true']
+
+Resources:
+  DemoEC2Instance:
+    Type: AWS::EC2::Instance
+    Condition: IsUseEC2
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          configSet01:
+            - init
+          configSet02:
+            - makeFile
+          default:
+            - ConfigSet: configSet01
+            - ConfigSet: configSet02
+        init:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack = ${AWS::StackName}
+                region = ${AWS::Region}
+                interval = 1
+              mode: "000400"
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers = post.update
+                path = Resources.DemoEC2Instance.Metadata.AWS::CloudFormation::Init
+                action = /opt/aws/bin/cfn-init -v -c configSet02 --stack ${AWS::StackName} --resource DemoEC2Instance --region ${AWS::Region}
+                runas = root
+              mode: "000400"
+              owner: root
+              group: root
+        makeFile:
+          commands:
+            runCommand01:
+              command: !Sub |
+                echo 'SampleParam is true!' > /home/ec2-user/output.txt
+              test: !Sub "test ${SampleParam} = 'true'"
+              ignoreErrors: false
+            runCommand02:
+              command: !Sub |
+                echo 'SampleParam is false!' > /home/ec2-user/output.txt
+              test: !Sub "test ${SampleParam} = 'false'"
+              ignoreErrors: false
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+    Properties:
+      SubnetId: !Ref SubnetId
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref EC2KeyPairName
+      SecurityGroupIds:
+        - !Ref DemoSecurityGroup
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #!/bin/bash
+          /opt/aws/bin/cfn-init --region ${AWS::Region} --stack ${AWS::StackName} --resource DemoEC2Instance
+          /opt/aws/bin/cfn-signal --region ${AWS::Region} --stack ${AWS::StackName} --resource DemoEC2Instance
+  DemoSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: demo
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SecurityGroupIngressCIDR
